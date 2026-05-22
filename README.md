@@ -9,35 +9,33 @@
 - Если материал одобрен, он автоматически появляется в ресурсах программы (телеграм-канал)
 
 ## Структура проекта (будет дописываться с появлением новых папок)
-
-hse_tgbot/                 # корневая папка проекта
+```
+hse_tgbot/                   # корневая папка проекта
 │
-├── src/                    # папка с кодом 
+├── src/                     # папка с кодом 
 │   ├── __init__.py         
 │   ├── main.py             
-│   ├── config.py          
 │   │
-│   ├── handlers/           # ВСЕ обработчики сообщений
-│   │   ├── __init__.py
-│   │   ├── start.py        # Команда /start
-│   │   ├── help.py         # /help
-│   │   └── admin.py        # Команды для админа
-│   │
-│   ├── keyboards/          # Клавиатуры (кнопки)
-│   │   ├── __init__.py
-│   │   ├── main_menu.py    # Главное меню
-│   │   └── inline_kb.py    # Inline-кнопки
-│   │
-│   ├── states/             # Машина состояний (для диалогов)
-│   │   ├── __init__.py
-│   │   └── form.py         # Например, опросник из 3 шагов
-│   │
-│   └── database/           # Работа с БД (SQLite/PostgreSQL)
+|   ├── bot/
+|   |   ├──__init__.py
+|   |   | 
+│   |   ├── handlers/         # обработчики сообщений
+│   │   |   └── __init__.py
+|   |   | 
+│   |   ├── keyboards/        # кнопки
+│   │   |   └──__init__.py
+|   |   |
+│   |   └── states/           # машина состояний (для диалогов)
+│   │       └──  __init__.py
+|   |
+│   └── database/             # работа с БД 
 │       ├── __init__.py
-│       ├── models.py       # Таблицы (схема БД)
-│       └── requests.py     # Функции: add_user(), get_user() и т.д.
+|       ├── config.py  
+│       └── database.py  
 │
-├──                
-├── .gitignore              
-├── requirements.txt        
-└── README.md               
+├── .gitignore                 
+├── Dockerfile          
+├── README.md
+├── docker-compose.yml   
+└── requirements.txt               
+```
