@@ -1,1 +1,14 @@
-
+services:
+  bot:
+    build: .
+    container_name: hse_tgbot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src # Монтируем код, чтобы потом проще отлаживать
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
