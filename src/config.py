@@ -28,6 +28,8 @@ class Settings(BaseSettings):
             return [int(part.strip()) for part in value.split(",") if part.strip()]
         if isinstance(value, (list, tuple)):
             return [int(v) for v in value]
+        if isinstance(value, int):
+            return [value]
         raise TypeError(f"Unsupported ADMIN_IDS type: {type(value)!r}")
 
     @field_validator("channel_id", mode="before")
