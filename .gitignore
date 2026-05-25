@@ -15,3 +15,7 @@ ENV/
 env/
 .env.local
 .env.*.local
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
