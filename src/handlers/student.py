@@ -4,7 +4,7 @@ import logging
 from html import escape
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandStart, StateFilter, or_f
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -161,7 +161,7 @@ async def on_photo(message: Message, state: FSMContext) -> None:
 
 @router.message(
     SubmissionStates.waiting_photos,
-    (F.text == DONE_BUTTON_TEXT) | (F.text == "/done") | Command("done"),
+    or_f(F.text == DONE_BUTTON_TEXT, F.text == "/done", Command("done")),
 )
 async def on_photos_done(message: Message, state: FSMContext) -> None:
     await _go_to_links(message, state)
