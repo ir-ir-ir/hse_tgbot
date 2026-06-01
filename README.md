@@ -48,7 +48,7 @@ hse_tgbot/
 
    ```env
    BOT_TOKEN=123456:ABC...
-   ADMIN_IDS=11111111,22222222
+   ADMIN_IDS=[11111111,22222222]
    CHANNEL_ID=@mychannel        # или числовой -1001234567890
    DATABASE_URL=sqlite+aiosqlite:///submissions.db
    ```
