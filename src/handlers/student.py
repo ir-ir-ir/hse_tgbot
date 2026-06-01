@@ -22,6 +22,7 @@ from ..keyboards.student import (
     photos_keyboard,
     remove_keyboard,
     skip_cancel_keyboard,
+    main_menu_keyboard,
 )
 from ..states.submission import SubmissionStates
 from .admin import notify_admins_about_new_submission
@@ -42,7 +43,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         "Привет! Я бот для подачи студенческих новостей.\n\n"
         "Используй /submit, чтобы предложить новость.\n"
         "Используй /status, чтобы посмотреть статусы своих заявок.",
-        reply_markup=remove_keyboard(),
+        reply_markup=main_menu_keyboard(),
     )
 
 
@@ -56,21 +57,28 @@ async def cmd_help(message: Message) -> None:
         reply_markup=remove_keyboard(),
     )
 
+@router.message(F.text == "Предложить новость")
+async def menu_submit(message: Message, state: FSMContext):
+    await cmd_submit(message, state)
+
+@router.message(F.text == "Статус")
+async def menu_status(message: Message):
+    await cmd_status(message)
 
 @router.message(Command("cancel"), StateFilter("*"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     current = await state.get_state()
     if current is None:
-        await message.answer("Нечего отменять.", reply_markup=remove_keyboard())
+        await message.answer("Нечего отменять.", reply_markup=main_menu_keyboard())
         return
     await state.clear()
-    await message.answer("Подача отменена.", reply_markup=remove_keyboard())
+    await message.answer("Подача отменена.", reply_markup=main_menu_keyboard())
 
 
 @router.message(F.text == CANCEL_BUTTON_TEXT, StateFilter(SubmissionStates))
 async def text_cancel(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Подача отменена.", reply_markup=remove_keyboard())
+    await message.answer("Подача отменена.", reply_markup=main_menu_keyboard())
 
 
 @router.message(Command("submit"))
@@ -251,7 +259,7 @@ async def confirm_cancel(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     if callback.message:
         await callback.message.edit_reply_markup(reply_markup=None)
-        await callback.message.answer("Подача отменена.")
+        await callback.message.answer("Подача отменена.", reply_markup=main_menu_keyboard())
     await callback.answer("Отменено")
 
 
@@ -277,7 +285,8 @@ async def confirm_send(
     if callback.message:
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer(
-            f"Ваша заявка #{submission.id} отправлена на модерацию ✅"
+            f"Ваша заявка #{submission.id} отправлена на модерацию ✅",
+            reply_markup=main_menu_keyboard()
         )
     await callback.answer("Заявка отправлена")
 
@@ -294,11 +303,11 @@ async def cmd_status(message: Message) -> None:
     user = message.from_user
     if user is None:
         return
-    submissions = await database.list_submissions_by_student(user.id, limit=20)
+    submissions = await database.list_submissions_by_student(user.id, limit=5)
     if not submissions:
         await message.answer(
             "У вас пока нет заявок. Используйте /submit, чтобы подать новость.",
-            reply_markup=remove_keyboard(),
+            reply_markup=main_menu_keyboard(),
         )
         return
     lines = ["<b>Ваши последние заявки:</b>", ""]
@@ -310,4 +319,12 @@ async def cmd_status(message: Message) -> None:
         if s.status == "rejected" and s.reject_reason:
             line += f"\n   причина: {escape(s.reject_reason)}"
         lines.append(line)
-    await message.answer("\n".join(lines), reply_markup=remove_keyboard())
+    await message.answer("\n".join(lines), reply_markup=main_menu_keyboard())
+
+@router.message()
+async def handle_unknown(message: Message) -> None:
+    """Ответ на любое неизвестное сообщение."""
+    await message.answer(
+        "Пожалуйста, выберите команду.",
+        reply_markup=main_menu_keyboard()
+    )

@@ -56,3 +56,14 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+def main_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Главное меню с кнопками команд."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Предложить новость")],
+            [KeyboardButton(text="Статус")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )

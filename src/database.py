@@ -118,7 +118,7 @@ async def list_recent_processed_submissions(limit: int = 20) -> list[Submission]
 
 
 async def list_submissions_by_student(
-    student_id: int, limit: int = 20
+    student_id: int, limit: int = 5
 ) -> list[Submission]:
     async with SessionLocal() as session:
         stmt = (
