@@ -53,7 +53,7 @@ def _format_submission_card(submission: Submission) -> str:
         "",
         f"<b>{escape(submission.title)}</b>",
         "",
-        escape(submission.text),
+        submission.text,
     ]
     if submission.links:
         parts.append("")

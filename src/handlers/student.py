@@ -132,7 +132,8 @@ async def on_text(message: Message, state: FSMContext) -> None:
             f"Максимум — {MAX_TEXT_LEN} символов."
         )
         return
-    await state.update_data(text=text, photo_file_ids=[])
+    html_text = message.html_text
+    await state.update_data(text=html_text, photo_file_ids=[])
     await state.set_state(SubmissionStates.waiting_photos)
     await message.answer(
         "Прикрепите <b>фотографии</b> (можно несколько, по одной за раз).\n"
@@ -243,7 +244,7 @@ async def _show_preview(message: Message, state: FSMContext) -> None:
 
 
 def _build_preview_caption(*, title: str, text: str, links: list[str]) -> str:
-    parts = [f"<b>{escape(title)}</b>", "", escape(text)]
+    parts = [f"<b>{escape(title)}</b>", "", text]
     if links:
         parts.append("")
         parts.append("<b>Ссылки:</b>")
