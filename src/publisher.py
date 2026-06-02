@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _build_post_text(submission: Submission) -> str:
     """Формирует HTML-текст поста для канала."""
-    parts = [f"<b>{escape(submission.title)}</b>", "", escape(submission.text)]
+    parts = [f"<b>{escape(submission.title)}</b>", "", submission.text]
     if submission.links:
         parts.append("")
         parts.append("<b>Ссылки:</b>")
