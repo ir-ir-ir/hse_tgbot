@@ -12,6 +12,7 @@ Telegram-бот для публикации новостей студентам�
 
 - Python 3.11 + [aiogram 3.x](https://docs.aiogram.dev/) (async)
 - SQLite через `aiosqlite` + SQLAlchemy 2.x (async) — хранение заявок
+- Redis — внешнее хранилище для FSM (состояния не сбрасываются при перезапуске)
 - `pydantic-settings` — конфигурация через `.env`
 
 ## Структура проекта
@@ -19,8 +20,8 @@ Telegram-бот для публикации новостей студентам�
 ```
 hse_tgbot/
 ├── src/
-│   ├── bot.py                 # точка входа: dispatcher, bot, polling
-│   ├── config.py              # Settings через pydantic-settings
+│   ├── bot.py                 # точка входа: dispatcher, bot, RedisStorage (FSM)
+│   ├── config.py              # Settings + Redis (redis_url, fsm_ttl)
 │   ├── database.py            # SQLAlchemy модели, engine, CRUD
 │   ├── publisher.py           # публикация одобренного материала в канал
 │   ├── filters/
@@ -56,6 +57,16 @@ hse_tgbot/
 ## Запуск
 
 ### Локально
+
+Установить Redis: https://github.com/microsoftarchive/redis/releases
+
+1. Запустить командную строку от имени администратора
+2. Перейти в папку, куда установился Redis 
+3. Запустить
+```bash
+.\redis-server.exe redis.windows.conf
+```
+Запуск бота:
 
 ```bash
 python -m venv .venv
