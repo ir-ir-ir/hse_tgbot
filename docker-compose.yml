@@ -1,14 +1,37 @@
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: hse_bot_redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - bot_network
+
   bot:
     build: .
     container_name: hse_tgbot
     restart: unless-stopped
     env_file:
-      - .env
+      - .env  # Загружаем общие переменные
+    environment:
+      # Переопределяем только то, что отличается в Docker
+      REDIS_HOST: redis  # В Docker контейнере redis доступен по имени сервиса
+      REDIS_PORT: 6379
+      REDIS_DB: 0
     volumes:
+      - ./submissions.db:/app/submissions.db # Монтируем DataBase
       - ./src:/app/src # Монтируем код, чтобы потом проще отлаживать
+    depends_on:
+      - redis  # Ждём запуска Redis
+    networks:
+      - bot_network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  bot_network:
+    driver: bridge
