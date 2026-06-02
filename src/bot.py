@@ -13,6 +13,8 @@ from .config import settings
 from .database import init_db
 from .handlers import admin as admin_handlers
 from .handlers import student as student_handlers
+from .middlewares.ban_check import BanCheckMiddleware
+
 
 async def main() -> None:
     logging.basicConfig(
@@ -24,13 +26,11 @@ async def main() -> None:
     await init_db()
     logger.info("Database initialised")
 
-    # Подключаемся к Redis
     redis_client = Redis.from_url(
         settings.redis_url,
-        decode_responses=False,  # aiogram требует bytes
+        decode_responses=False,
     )
 
-    # Проверяем соединение с Redis
     try:
         await redis_client.ping()
         logger.info(f"Connected to Redis at {settings.redis_host}:{settings.redis_port}")
@@ -38,7 +38,6 @@ async def main() -> None:
         logger.error(f"Failed to connect to Redis: {e}")
         raise
 
-    # Создаем Redis storage для FSM
     storage = RedisStorage(
         redis=redis_client,
         state_ttl=settings.fsm_ttl,
@@ -50,23 +49,13 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Инициализируем диспетчер с Redis storage
     dp = Dispatcher(storage=storage)
 
-    """ Понадобится для третьего задания
-    # Создаем менеджеры и middleware
-    redis_manager = RedisManager(redis_client, settings.fsm_ttl)
-
-    # Добавляем middleware
-    dp.message.middleware(RateLimitMiddleware(redis_manager))
-    dp.callback_query.middleware(RateLimitMiddleware(redis_manager))
-    dp.message.middleware(BanCheckMiddleware(settings))
-    dp.callback_query.middleware(BanCheckMiddleware(settings))
-
-    # Передаем зависимости в роутеры
-    admin_handlers.router.forward_to = None  # сбрасываем, если был
-    student_handlers.router.forward_to = None
-    """
+    # Подключаем middleware бан-фильтра для студентов.
+    # Регистрируем на уровне диспетчера — до роутеров.
+    ban_middleware = BanCheckMiddleware()
+    dp.message.middleware(ban_middleware)
+    dp.callback_query.middleware(ban_middleware)
 
     # Порядок важен: admin-роутер раньше — у него есть свой filter.
     dp.include_router(admin_handlers.router)
@@ -76,7 +65,7 @@ async def main() -> None:
     try:
         await dp.start_polling(bot)
     finally:
-        await redis_client.close()
+        await redis_client.aclose()
         await bot.session.close()
         logger.info("Connections closed")
 

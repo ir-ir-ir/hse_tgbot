@@ -27,9 +27,7 @@ router = Router(name="admin")
 router.message.filter(AdminFilter())
 router.callback_query.filter(AdminFilter())
 
-# submission_id -> [(chat_id, message_id)] для рассылки модераторам.
-# Нужен, чтобы после решения одного администратора отредактировать
-# уведомления у остальных.
+# submission_id -> [(chat_id, message_id)]
 _NOTIFICATIONS: dict[int, list[tuple[int, int]]] = {}
 
 
@@ -66,7 +64,6 @@ def _format_submission_card(submission: Submission) -> str:
 async def notify_admins_about_new_submission(
     bot: Bot, submission: Submission
 ) -> None:
-    """Рассылает карточку заявки всем администраторам."""
     if not settings.admin_ids:
         logger.warning("ADMIN_IDS пуст — карточка модерации не отправлена.")
         return
@@ -78,9 +75,7 @@ async def notify_admins_about_new_submission(
         try:
             if photos:
                 media: list[InputMediaPhoto] = [
-                    InputMediaPhoto(
-                        media=photos[0], caption=caption, parse_mode="HTML"
-                    )
+                    InputMediaPhoto(media=photos[0], caption=caption, parse_mode="HTML")
                 ]
                 for file_id in photos[1:]:
                     media.append(InputMediaPhoto(media=file_id))
@@ -99,9 +94,7 @@ async def notify_admins_about_new_submission(
                 )
             _register_notification(submission.id, prompt.chat.id, prompt.message_id)
         except TelegramAPIError:
-            logger.exception(
-                "Failed to deliver moderation card to admin %s", admin_id
-            )
+            logger.exception("Failed to deliver moderation card to admin %s", admin_id)
 
 
 async def _broadcast_decision(
@@ -110,7 +103,6 @@ async def _broadcast_decision(
     status_text: str,
     skip: tuple[int, int] | None = None,
 ) -> None:
-    """Заменяет кнопки на текст-статус во всех остальных карточках админов."""
     targets = _pop_notifications(submission_id)
     for chat_id, message_id in targets:
         if skip is not None and (chat_id, message_id) == skip:
@@ -124,11 +116,13 @@ async def _broadcast_decision(
             )
         except TelegramAPIError:
             logger.warning(
-                "Failed to edit moderation card chat=%s msg=%s",
-                chat_id,
-                message_id,
+                "Failed to edit moderation card chat=%s msg=%s", chat_id, message_id
             )
 
+
+# ---------------------------------------------------------------------------
+# Модерация
+# ---------------------------------------------------------------------------
 
 @router.callback_query(ModerationCallback.filter(F.action == "approve"))
 async def on_approve(
@@ -149,13 +143,9 @@ async def on_approve(
         await callback.answer("Заявка не найдена", show_alert=True)
         return
     if submission.status != "approved":
-        await callback.answer(
-            "Заявка уже обработана.", show_alert=True
-        )
+        await callback.answer("Заявка уже обработана.", show_alert=True)
         await _broadcast_decision(
-            bot,
-            submission_id,
-            status_text=f"Заявка #{submission_id} уже обработана.",
+            bot, submission_id, f"Заявка #{submission_id} уже обработана."
         )
         return
 
@@ -163,8 +153,6 @@ async def on_approve(
         f"✅ Заявка #{submission.id} одобрена администратором "
         f"{escape(reviewer_label)}"
     )
-
-    # Обновляем собственное сообщение администратора.
     if callback.message:
         try:
             await callback.message.edit_text(status_text, parse_mode="HTML")
@@ -172,7 +160,6 @@ async def on_approve(
             logger.warning("Failed to edit reviewer's card.")
     await callback.answer("Одобрено")
 
-    # Прочие администраторы.
     skip = (
         (callback.message.chat.id, callback.message.message_id)
         if callback.message
@@ -180,7 +167,6 @@ async def on_approve(
     )
     await _broadcast_decision(bot, submission.id, status_text, skip=skip)
 
-    # Публикуем в канал.
     try:
         channel_message_id = await publisher.publish_submission(bot, submission)
         if channel_message_id is not None:
@@ -198,7 +184,6 @@ async def on_approve(
         except TelegramAPIError:
             pass
 
-    # Уведомляем студента.
     try:
         await bot.send_message(
             chat_id=submission.student_id,
@@ -209,9 +194,7 @@ async def on_approve(
             parse_mode="HTML",
         )
     except TelegramAPIError:
-        logger.warning(
-            "Failed to notify student %s about approval", submission.student_id
-        )
+        logger.warning("Failed to notify student %s about approval", submission.student_id)
 
 
 @router.callback_query(ModerationCallback.filter(F.action == "reject"))
@@ -311,9 +294,7 @@ def _short_list(items: Iterable[Submission], header: str) -> str:
             f"@{s.student_username}" if s.student_username else f"id={s.student_id}"
         )
         if s.status == "pending":
-            line = (
-                f"🕒 #{s.id} — {escape(s.title)} — от {escape(author)}"
-            )
+            line = f"🕒 #{s.id} — {escape(s.title)} — от {escape(author)}"
         else:
             emoji = "✅" if s.status == "approved" else "❌"
             line = (
@@ -338,3 +319,110 @@ async def cmd_history(message: Message) -> None:
     submissions = await database.list_recent_processed_submissions(limit=20)
     text = _short_list(submissions, "<b>Последние обработанные заявки:</b>")
     await message.answer(text, parse_mode="HTML")
+
+
+# ---------------------------------------------------------------------------
+# Чёрный список (задача 3)
+# ---------------------------------------------------------------------------
+
+@router.message(Command("ban"))
+async def cmd_ban(message: Message) -> None:
+    """
+    Использование:
+      /ban <user_id> [причина]
+      /ban @username [причина]   — только если бот знает user_id по username
+    Reply на сообщение пользователя — без аргументов.
+    """
+    admin = message.from_user
+
+    # Определяем цель: reply или аргумент команды
+    target_id: int | None = None
+    target_username: str | None = None
+    target_full_name: str | None = None
+    reason: str | None = None
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        target_id = target.id
+        target_username = target.username
+        target_full_name = target.full_name
+        # Всё после команды — причина
+        parts = (message.text or "").split(maxsplit=1)
+        reason = parts[1].strip() if len(parts) > 1 else None
+    else:
+        # /ban <user_id> [причина]
+        parts = (message.text or "").split(maxsplit=2)
+        if len(parts) < 2:
+            await message.answer(
+                "Использование:\n"
+                "/ban &lt;user_id&gt; [причина]\n"
+                "или ответьте на сообщение пользователя командой /ban [причина]"
+            )
+            return
+        try:
+            target_id = int(parts[1])
+        except ValueError:
+            await message.answer("user_id должен быть числом.")
+            return
+        reason = parts[2].strip() if len(parts) > 2 else None
+
+    if target_id in settings.admin_ids:
+        await message.answer("Нельзя забанить администратора.")
+        return
+
+    entry, created = await database.ban_user(
+        user_id=target_id,
+        username=target_username,
+        full_name=target_full_name,
+        reason=reason,
+        banned_by=admin.id,
+        banned_by_username=admin.username,
+    )
+    if not created:
+        await message.answer(f"Пользователь {target_id} уже в чёрном списке.")
+        return
+
+    label = f"@{target_username}" if target_username else str(target_id)
+    reason_str = f"\nПричина: {escape(reason)}" if reason else ""
+    await message.answer(f"🚫 Пользователь {escape(label)} забанен.{reason_str}")
+
+
+@router.message(Command("unban"))
+async def cmd_unban(message: Message) -> None:
+    """Использование: /unban <user_id>"""
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /unban &lt;user_id&gt;")
+        return
+    try:
+        target_id = int(parts[1].strip())
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+
+    removed = await database.unban_user(target_id)
+    if removed:
+        await message.answer(f"✅ Пользователь {target_id} удалён из чёрного списка.")
+    else:
+        await message.answer(f"Пользователь {target_id} не найден в чёрном списке.")
+
+
+@router.message(Command("blacklist"))
+async def cmd_blacklist(message: Message) -> None:
+    """Показывает список забаненных пользователей."""
+    entries = await database.list_blacklist(limit=50)
+    if not entries:
+        await message.answer("Чёрный список пуст.")
+        return
+
+    lines = [f"<b>Чёрный список ({len(entries)}):</b>", ""]
+    for e in entries:
+        label = f"@{e.username}" if e.username else (e.full_name or str(e.user_id))
+        line = f"🚫 {escape(label)} (id={e.user_id})"
+        if e.reason:
+            line += f" — {escape(e.reason)}"
+        banned_by = f"@{e.banned_by_username}" if e.banned_by_username else str(e.banned_by)
+        line += f"\n   забанен: {escape(banned_by)}, {e.banned_at.strftime('%d.%m.%Y %H:%M')}"
+        lines.append(line)
+
+    await message.answer("\n".join(lines), parse_mode="HTML")

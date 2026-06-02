@@ -16,13 +16,16 @@ from .. import database
 from ..keyboards.student import (
     CANCEL_BUTTON_TEXT,
     DONE_BUTTON_TEXT,
+    SAVE_DRAFT_BUTTON_TEXT,
     SKIP_BUTTON_TEXT,
+    DraftCallback,
     cancel_keyboard,
     confirm_keyboard,
+    drafts_list_keyboard,
+    main_menu_keyboard,
     photos_keyboard,
     remove_keyboard,
     skip_cancel_keyboard,
-    main_menu_keyboard,
 )
 from ..states.submission import SubmissionStates
 from .admin import notify_admins_about_new_submission
@@ -36,13 +39,18 @@ MAX_TEXT_LEN = 3000
 MAX_PHOTOS = 10
 
 
+# ---------------------------------------------------------------------------
+# Старт / помощь
+# ---------------------------------------------------------------------------
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(
         "Привет! Я бот для подачи студенческих новостей.\n\n"
         "Используй /submit, чтобы предложить новость.\n"
-        "Используй /status, чтобы посмотреть статусы своих заявок.",
+        "Используй /status, чтобы посмотреть статусы своих заявок.\n"
+        "Используй /drafts, чтобы открыть черновики.",
         reply_markup=main_menu_keyboard(),
     )
 
@@ -53,17 +61,34 @@ async def cmd_help(message: Message) -> None:
         "Команды:\n"
         "/submit — подать новость\n"
         "/status — статусы моих заявок\n"
+        "/drafts — мои черновики\n"
         "/cancel — отменить текущую подачу",
         reply_markup=remove_keyboard(),
     )
 
+
+# ---------------------------------------------------------------------------
+# Кнопки главного меню
+# ---------------------------------------------------------------------------
+
 @router.message(F.text == "Предложить новость")
-async def menu_submit(message: Message, state: FSMContext):
+async def menu_submit(message: Message, state: FSMContext) -> None:
     await cmd_submit(message, state)
 
+
 @router.message(F.text == "Статус")
-async def menu_status(message: Message):
+async def menu_status(message: Message) -> None:
     await cmd_status(message)
+
+
+@router.message(F.text == "Черновики")
+async def menu_drafts(message: Message) -> None:
+    await cmd_drafts(message)
+
+
+# ---------------------------------------------------------------------------
+# Отмена
+# ---------------------------------------------------------------------------
 
 @router.message(Command("cancel"), StateFilter("*"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
@@ -81,6 +106,47 @@ async def text_cancel(message: Message, state: FSMContext) -> None:
     await message.answer("Подача отменена.", reply_markup=main_menu_keyboard())
 
 
+# ---------------------------------------------------------------------------
+# Сохранить черновик (из любого шага FSM)
+# ---------------------------------------------------------------------------
+
+@router.message(F.text == SAVE_DRAFT_BUTTON_TEXT, StateFilter(SubmissionStates))
+async def save_draft_handler(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    user = message.from_user
+
+    title = data.get("title")
+    text = data.get("text")
+    photo_file_ids = list(data.get("photo_file_ids", []))
+    links = list(data.get("links", []))
+
+    # Черновик имеет смысл только если хоть что-то заполнено
+    if not title and not text:
+        await message.answer(
+            "Нечего сохранять — заголовок и текст ещё не введены.",
+            reply_markup=cancel_keyboard(),
+        )
+        return
+
+    draft = await database.save_draft(
+        student_id=user.id,
+        title=title,
+        text=text,
+        photo_file_ids=photo_file_ids,
+        links=links,
+    )
+    await state.clear()
+    await message.answer(
+        f"Черновик #{draft.id} сохранён ✅\n"
+        "Вы можете вернуться к нему через /drafts.",
+        reply_markup=main_menu_keyboard(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# FSM — подача заявки
+# ---------------------------------------------------------------------------
+
 @router.message(Command("submit"))
 async def cmd_submit(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -94,8 +160,8 @@ async def cmd_submit(message: Message, state: FSMContext) -> None:
 @router.message(SubmissionStates.waiting_title, F.text)
 async def on_title(message: Message, state: FSMContext) -> None:
     title = (message.text or "").strip()
-    if title == CANCEL_BUTTON_TEXT:
-        return  # обработано выше
+    if title in (CANCEL_BUTTON_TEXT, SAVE_DRAFT_BUTTON_TEXT):
+        return
     if not title:
         await message.answer("Заголовок не может быть пустым. Попробуйте ещё раз.")
         return
@@ -121,7 +187,7 @@ async def on_title_invalid(message: Message) -> None:
 @router.message(SubmissionStates.waiting_text, F.text)
 async def on_text(message: Message, state: FSMContext) -> None:
     text = (message.text or "").strip()
-    if text == CANCEL_BUTTON_TEXT:
+    if text in (CANCEL_BUTTON_TEXT, SAVE_DRAFT_BUTTON_TEXT):
         return
     if not text:
         await message.answer("Текст не может быть пустым.")
@@ -158,7 +224,6 @@ async def on_photo(message: Message, state: FSMContext) -> None:
             f"Нажмите «{DONE_BUTTON_TEXT}» для продолжения."
         )
         return
-    # message.photo — список PhotoSize'ов разных размеров; берём наибольший (последний)
     biggest = message.photo[-1]
     photos.append(biggest.file_id)
     await state.update_data(photo_file_ids=photos)
@@ -186,7 +251,8 @@ async def on_photos_skip(message: Message, state: FSMContext) -> None:
 async def on_photos_invalid(message: Message) -> None:
     await message.answer(
         "Пришлите фотографию, нажмите "
-        f"«{DONE_BUTTON_TEXT}», «{SKIP_BUTTON_TEXT}» или «{CANCEL_BUTTON_TEXT}»."
+        f"«{DONE_BUTTON_TEXT}», «{SKIP_BUTTON_TEXT}», «{SAVE_DRAFT_BUTTON_TEXT}» "
+        f"или «{CANCEL_BUTTON_TEXT}»."
     )
 
 
@@ -208,7 +274,7 @@ async def on_links_skip(message: Message, state: FSMContext) -> None:
 @router.message(SubmissionStates.waiting_links, F.text)
 async def on_links(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()
-    if raw == CANCEL_BUTTON_TEXT:
+    if raw in (CANCEL_BUTTON_TEXT, SAVE_DRAFT_BUTTON_TEXT):
         return
     parts = [p.strip() for p in raw.replace("\n", ",").split(",")]
     links = [p for p in parts if p]
@@ -236,9 +302,7 @@ async def _show_preview(message: Message, state: FSMContext) -> None:
         for file_id in photos[1:]:
             media.append(InputMediaPhoto(media=file_id))
         await message.answer_media_group(media=media)
-        await message.answer(
-            "Подтвердите отправку:", reply_markup=confirm_keyboard()
-        )
+        await message.answer("Подтвердите отправку:", reply_markup=confirm_keyboard())
     else:
         await message.answer(caption, reply_markup=confirm_keyboard())
 
@@ -287,17 +351,19 @@ async def confirm_send(
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.answer(
             f"Ваша заявка #{submission.id} отправлена на модерацию ✅",
-            reply_markup=main_menu_keyboard()
+            reply_markup=main_menu_keyboard(),
         )
     await callback.answer("Заявка отправлена")
 
     try:
         await notify_admins_about_new_submission(bot, submission)
     except Exception:
-        logger.exception(
-            "Failed to notify admins about submission #%s", submission.id
-        )
+        logger.exception("Failed to notify admins about submission #%s", submission.id)
 
+
+# ---------------------------------------------------------------------------
+# Статус заявок
+# ---------------------------------------------------------------------------
 
 @router.message(Command("status"))
 async def cmd_status(message: Message) -> None:
@@ -313,19 +379,140 @@ async def cmd_status(message: Message) -> None:
         return
     lines = ["<b>Ваши последние заявки:</b>", ""]
     for s in submissions:
-        emoji = {"pending": "🕒", "approved": "✅", "rejected": "❌"}.get(
-            s.status, "•"
-        )
+        emoji = {"pending": "🕒", "approved": "✅", "rejected": "❌"}.get(s.status, "•")
         line = f"{emoji} #{s.id} — {escape(s.title)} — <i>{s.status}</i>"
         if s.status == "rejected" and s.reject_reason:
             line += f"\n   причина: {escape(s.reject_reason)}"
         lines.append(line)
     await message.answer("\n".join(lines), reply_markup=main_menu_keyboard())
 
+
+# ---------------------------------------------------------------------------
+# Черновики (задача 1)
+# ---------------------------------------------------------------------------
+
+@router.message(Command("drafts"))
+async def cmd_drafts(message: Message) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    drafts = await database.list_drafts_by_student(user.id)
+    if not drafts:
+        await message.answer(
+            "У вас нет сохранённых черновиков.\n"
+            "Во время подачи заявки нажмите «Сохранить черновик».",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+    await message.answer(
+        f"<b>Ваши черновики ({len(drafts)}):</b>\n"
+        "Нажмите 📂 чтобы загрузить, 🗑 чтобы удалить.",
+        reply_markup=drafts_list_keyboard(drafts),
+    )
+
+
+@router.callback_query(DraftCallback.filter(F.action == "delete"))
+async def on_draft_delete(
+    callback: CallbackQuery, callback_data: DraftCallback
+) -> None:
+    user = callback.from_user
+    deleted = await database.delete_draft(callback_data.draft_id, user.id)
+    if not deleted:
+        await callback.answer("Черновик не найден.", show_alert=True)
+        return
+    await callback.answer("Черновик удалён 🗑")
+    # Обновляем список
+    drafts = await database.list_drafts_by_student(user.id)
+    if callback.message:
+        if drafts:
+            await callback.message.edit_reply_markup(
+                reply_markup=drafts_list_keyboard(drafts)
+            )
+        else:
+            await callback.message.edit_text(
+                "Черновиков больше нет.",
+                reply_markup=None,
+            )
+
+
+@router.callback_query(DraftCallback.filter(F.action == "load"))
+async def on_draft_load(
+    callback: CallbackQuery, callback_data: DraftCallback, state: FSMContext
+) -> None:
+    user = callback.from_user
+    draft = await database.get_draft(callback_data.draft_id)
+    if draft is None or draft.student_id != user.id:
+        await callback.answer("Черновик не найден.", show_alert=True)
+        return
+
+    # Загружаем данные черновика в FSM и ставим состояние
+    # В зависимости от того, что заполнено, переходим к нужному шагу
+    await state.update_data(
+        title=draft.title or "",
+        text=draft.text or "",
+        photo_file_ids=list(draft.photo_file_ids or []),
+        links=list(draft.links or []),
+    )
+
+    await callback.answer("Черновик загружен")
+
+    if callback.message:
+        await callback.message.edit_reply_markup(reply_markup=None)
+
+    if not draft.title:
+        await state.set_state(SubmissionStates.waiting_title)
+        await callback.message.answer(
+            "Черновик загружен. Введите <b>заголовок</b> новости.",
+            reply_markup=cancel_keyboard(),
+        )
+    elif not draft.text:
+        await state.set_state(SubmissionStates.waiting_text)
+        await callback.message.answer(
+            f"Черновик загружен. Заголовок: <b>{escape(draft.title)}</b>\n\n"
+            "Введите <b>текст</b> новости.",
+            reply_markup=cancel_keyboard(),
+        )
+    else:
+        # Всё заполнено — показываем превью
+        await _show_preview_from_data(
+            callback.message,
+            state,
+            title=draft.title,
+            text=draft.text,
+            photos=list(draft.photo_file_ids or []),
+            links=list(draft.links or []),
+        )
+
+
+async def _show_preview_from_data(
+    message: Message,
+    state: FSMContext,
+    *,
+    title: str,
+    text: str,
+    photos: list[str],
+    links: list[str],
+) -> None:
+    caption = _build_preview_caption(title=title, text=text, links=links)
+    await state.set_state(SubmissionStates.waiting_confirm)
+    await message.answer("Черновик загружен. Вот превью:", reply_markup=remove_keyboard())
+    if photos:
+        media = [InputMediaPhoto(media=photos[0], caption=caption, parse_mode="HTML")]
+        for file_id in photos[1:]:
+            media.append(InputMediaPhoto(media=file_id))
+        await message.answer_media_group(media=media)
+        await message.answer("Подтвердите отправку:", reply_markup=confirm_keyboard())
+    else:
+        await message.answer(caption, reply_markup=confirm_keyboard())
+
+
+# ---------------------------------------------------------------------------
+# Fallback
+# ---------------------------------------------------------------------------
+
 @router.message()
 async def handle_unknown(message: Message) -> None:
-    """Ответ на любое неизвестное сообщение."""
     await message.answer(
         "Пожалуйста, выберите команду.",
-        reply_markup=main_menu_keyboard()
+        reply_markup=main_menu_keyboard(),
     )

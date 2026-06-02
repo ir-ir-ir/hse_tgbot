@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, select, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, select, func
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -51,6 +51,50 @@ class Submission(Base):
     channel_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
+# ---------------------------------------------------------------------------
+# Черновики (задача 1)
+# ---------------------------------------------------------------------------
+
+class Draft(Base):
+    """Черновик заявки — сохраняется пользователем в любой момент FSM."""
+    __tablename__ = "drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    student_id: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    photo_file_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    links: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+# ---------------------------------------------------------------------------
+# Чёрный список (задача 3)
+# ---------------------------------------------------------------------------
+
+class BlacklistEntry(Base):
+    """Запись о забаненном пользователе."""
+    __tablename__ = "blacklist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    banned_by: Mapped[int] = mapped_column(Integer)
+    banned_by_username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    banned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Engine / session
+# ---------------------------------------------------------------------------
+
 engine = create_async_engine(settings.database_url, echo=False, future=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
@@ -60,6 +104,10 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+
+# ---------------------------------------------------------------------------
+# CRUD — Submission (без изменений)
+# ---------------------------------------------------------------------------
 
 async def create_submission(
     *,
@@ -187,3 +235,133 @@ async def count_submissions_by_status(student_id: int) -> dict[str, int]:
         )
         result = await session.execute(stmt)
         return {row[0]: row[1] for row in result.all()}
+
+
+# ---------------------------------------------------------------------------
+# CRUD — Draft (задача 1)
+# ---------------------------------------------------------------------------
+
+async def save_draft(
+    *,
+    student_id: int,
+    title: Optional[str],
+    text: Optional[str],
+    photo_file_ids: list[str],
+    links: list[str],
+) -> Draft:
+    """Создаёт новый черновик."""
+    async with SessionLocal() as session:
+        draft = Draft(
+            student_id=student_id,
+            title=title,
+            text=text,
+            photo_file_ids=photo_file_ids,
+            links=links,
+        )
+        session.add(draft)
+        await session.commit()
+        await session.refresh(draft)
+        return draft
+
+
+async def get_draft(draft_id: int) -> Optional[Draft]:
+    async with SessionLocal() as session:
+        return await session.get(Draft, draft_id)
+
+
+async def list_drafts_by_student(student_id: int, limit: int = 10) -> list[Draft]:
+    async with SessionLocal() as session:
+        stmt = (
+            select(Draft)
+            .where(Draft.student_id == student_id)
+            .order_by(Draft.updated_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
+async def delete_draft(draft_id: int, student_id: int) -> bool:
+    """Удаляет черновик. Возвращает True если удалён, False если не найден
+    или не принадлежит студенту."""
+    async with SessionLocal() as session:
+        draft = await session.get(Draft, draft_id)
+        if draft is None or draft.student_id != student_id:
+            return False
+        await session.delete(draft)
+        await session.commit()
+        return True
+
+
+# ---------------------------------------------------------------------------
+# CRUD — Blacklist (задача 3)
+# ---------------------------------------------------------------------------
+
+async def ban_user(
+    *,
+    user_id: int,
+    username: Optional[str],
+    full_name: Optional[str],
+    reason: Optional[str],
+    banned_by: int,
+    banned_by_username: Optional[str],
+) -> tuple[BlacklistEntry, bool]:
+    """Добавляет пользователя в чёрный список.
+    Возвращает (запись, created): created=False если уже был забанен."""
+    async with SessionLocal() as session:
+        existing = await session.scalar(
+            select(BlacklistEntry).where(BlacklistEntry.user_id == user_id)
+        )
+        if existing is not None:
+            return existing, False
+        entry = BlacklistEntry(
+            user_id=user_id,
+            username=username,
+            full_name=full_name,
+            reason=reason,
+            banned_by=banned_by,
+            banned_by_username=banned_by_username,
+        )
+        session.add(entry)
+        await session.commit()
+        await session.refresh(entry)
+        return entry, True
+
+
+async def unban_user(user_id: int) -> bool:
+    """Удаляет из чёрного списка. Возвращает True если запись была."""
+    async with SessionLocal() as session:
+        entry = await session.scalar(
+            select(BlacklistEntry).where(BlacklistEntry.user_id == user_id)
+        )
+        if entry is None:
+            return False
+        await session.delete(entry)
+        await session.commit()
+        return True
+
+
+async def is_banned(user_id: int) -> bool:
+    async with SessionLocal() as session:
+        entry = await session.scalar(
+            select(BlacklistEntry).where(BlacklistEntry.user_id == user_id)
+        )
+        return entry is not None
+
+
+async def list_blacklist(limit: int = 50) -> list[BlacklistEntry]:
+    async with SessionLocal() as session:
+        stmt = (
+            select(BlacklistEntry)
+            .order_by(BlacklistEntry.banned_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
+async def get_blacklist_entry_by_user_id(user_id: int) -> Optional[BlacklistEntry]:
+    async with SessionLocal() as session:
+        return await session.scalar(
+            select(BlacklistEntry).where(BlacklistEntry.user_id == user_id)
+        )
