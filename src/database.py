@@ -365,3 +365,23 @@ async def get_blacklist_entry_by_user_id(user_id: int) -> Optional[BlacklistEntr
         return await session.scalar(
             select(BlacklistEntry).where(BlacklistEntry.user_id == user_id)
         )
+
+async def update_submission_text(
+    submission_id: int,
+    new_text: str,
+) -> Optional[Submission]:
+    async with SessionLocal() as session:
+        submission = await session.get(Submission, submission_id)
+
+        if submission is None:
+            return None
+
+        if submission.status != SubmissionStatus.PENDING:
+            return submission
+
+        submission.text = new_text
+
+        await session.commit()
+        await session.refresh(submission)
+
+        return submission
