@@ -13,6 +13,7 @@ from aiogram.types import (
 )
 
 from .. import database
+from ..config import settings
 from ..keyboards.student import (
     CANCEL_BUTTON_TEXT,
     DONE_BUTTON_TEXT,
@@ -28,7 +29,10 @@ from ..keyboards.student import (
     skip_cancel_keyboard,
 )
 from ..states.submission import SubmissionStates
-from .admin import notify_admins_about_new_submission
+from .admin import (
+    notify_admins_about_new_submission,
+    notify_admins_about_publish_permissions_problem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +76,8 @@ async def cmd_help(message: Message) -> None:
 # ---------------------------------------------------------------------------
 
 @router.message(F.text == "Предложить новость")
-async def menu_submit(message: Message, state: FSMContext) -> None:
-    await cmd_submit(message, state)
+async def menu_submit(message: Message, state: FSMContext, bot: Bot):
+    await cmd_submit(message, state, bot)
 
 
 @router.message(F.text == "Статус")
@@ -148,8 +152,29 @@ async def save_draft_handler(message: Message, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 
 @router.message(Command("submit"))
-async def cmd_submit(message: Message, state: FSMContext) -> None:
+async def cmd_submit(message: Message, state: FSMContext, bot: Bot) -> None:
     await state.clear()
+    if not await _bot_can_publish_to_channel(bot):
+        await message.answer(
+            "К сожалению, сейчас мы не можем принять новость по техническим "
+            "причинам. Администраторы уже занимаются решением вопроса.",
+            reply_markup=main_menu_keyboard(),
+        )
+        user = message.from_user
+        if user is not None:
+            try:
+                await notify_admins_about_publish_permissions_problem(
+                    bot=bot,
+                    student_id=user.id,
+                    student_username=user.username,
+                    student_full_name=user.full_name,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to notify admins about publish permissions problem."
+                )
+        return
+
     await state.set_state(SubmissionStates.waiting_title)
     await message.answer(
         "Введите <b>заголовок</b> новости (до 200 символов).",
@@ -317,6 +342,22 @@ def _build_preview_caption(*, title: str, text: str, links: list[str]) -> str:
     return "\n".join(parts)
 
 
+async def _bot_can_publish_to_channel(bot: Bot) -> bool:
+    try:
+        bot_user = await bot.get_me()
+        member = await bot.get_chat_member(settings.channel_id, bot_user.id)
+    except Exception:
+        logger.exception("Failed to check bot publish permissions in channel.")
+        return False
+
+    status = getattr(member.status, "value", member.status)
+    if status == "creator":
+        return True
+    return status == "administrator" and bool(
+        getattr(member, "can_post_messages", False)
+    )
+
+
 @router.callback_query(
     SubmissionStates.waiting_confirm, F.data == "submission:cancel"
 )
@@ -336,6 +377,34 @@ async def confirm_send(
 ) -> None:
     data = await state.get_data()
     user = callback.from_user
+
+    if not await _bot_can_publish_to_channel(bot):
+        await state.clear()
+        title = data.get("title", "")
+
+        if callback.message:
+            await callback.message.edit_reply_markup(reply_markup=None)
+            await callback.message.answer(
+                "К сожалению, сейчас мы не можем принять новость по техническим "
+                "причинам. Администраторы уже занимаются решением вопроса.",
+                reply_markup=main_menu_keyboard(),
+            )
+        await callback.answer("Техническая проблема", show_alert=True)
+
+        try:
+            await notify_admins_about_publish_permissions_problem(
+                bot=bot,
+                student_id=user.id,
+                student_username=user.username,
+                student_full_name=user.full_name,
+                title=title,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to notify admins about publish permissions problem."
+            )
+        return
+
     submission = await database.create_submission(
         student_id=user.id,
         student_username=user.username,

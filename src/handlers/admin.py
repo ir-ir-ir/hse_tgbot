@@ -14,12 +14,12 @@ from aiogram.types import (
     Message,
 )
 
-from .. import database, publisher
-from ..config import settings
-from ..database import Submission
-from ..filters.admin import AdminFilter
-from ..keyboards.admin import ModerationCallback, moderation_keyboard
-from ..states.submission import ModerationStates
+from hse_tgbot.src import database, publisher
+from hse_tgbot.src.config import settings
+from hse_tgbot.src.database import Submission
+from hse_tgbot.src.filters.admin import AdminFilter
+from hse_tgbot.src.keyboards.admin import ModerationCallback, moderation_keyboard
+from hse_tgbot.src.states.submission import ModerationStates
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,52 @@ async def notify_admins_about_new_submission(
             logger.exception("Failed to deliver moderation card to admin %s", admin_id)
 
 
+async def notify_admins_about_publish_permissions_problem(
+    *,
+    bot: Bot,
+    student_id: int,
+    student_username: str | None,
+    student_full_name: str | None,
+    title: str | None = None,
+) -> None:
+    """Сообщает администраторам, что студент не смог отправить заявку."""
+    if not settings.admin_ids:
+        logger.warning("ADMIN_IDS пуст — уведомление о правах не отправлено.")
+        return
+
+    student_label = (
+        f"@{student_username}"
+        if student_username
+        else (student_full_name or f"id={student_id}")
+    )
+    parts = [
+        "⚠️ Студент хотел предложить новость, но у бота нет прав на "
+        "публикацию в канале.",
+        "",
+        f"Студент: {escape(student_label)}",
+    ]
+    if title:
+        parts.append(f"Заголовок: {escape(title)}")
+    parts.extend(
+        [
+            f"Канал: {escape(settings.channel_id)}",
+            "",
+            "Проверьте, что бот добавлен администратором канала и имеет право "
+            "публиковать сообщения.",
+        ]
+    )
+    text = "\n".join(parts)
+
+    for admin_id in settings.admin_ids:
+        try:
+            await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
+        except TelegramAPIError:
+            logger.exception(
+                "Failed to notify admin %s about publish permissions problem",
+                admin_id,
+            )
+
+
 async def _broadcast_decision(
     bot: Bot,
     submission_id: int,
@@ -167,10 +213,13 @@ async def on_approve(
     )
     await _broadcast_decision(bot, submission.id, status_text, skip=skip)
 
+    # Публикуем в канал.
+    published = False
     try:
         channel_message_id = await publisher.publish_submission(bot, submission)
         if channel_message_id is not None:
             await database.set_channel_message_id(submission.id, channel_message_id)
+            published = True
     except Exception:
         logger.exception("Failed to publish submission #%s", submission.id)
         try:
@@ -184,13 +233,21 @@ async def on_approve(
         except TelegramAPIError:
             pass
 
+    # Уведомляем студента.
+    student_text = (
+        f"✅ Ваша заявка #{submission.id} «{escape(submission.title)}» "
+        f"одобрена и опубликована."
+        if published
+        else (
+            f"✅ Ваша заявка #{submission.id} «{escape(submission.title)}» "
+            "одобрена, но публикация временно не удалась по техническим "
+            "причинам. Администраторы уже занимаются решением вопроса."
+        )
+    )
     try:
         await bot.send_message(
             chat_id=submission.student_id,
-            text=(
-                f"✅ Ваша заявка #{submission.id} «{escape(submission.title)}» "
-                f"одобрена и опубликована."
-            ),
+            text=student_text,
             parse_mode="HTML",
         )
     except TelegramAPIError:
