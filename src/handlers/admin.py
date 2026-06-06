@@ -483,3 +483,90 @@ async def cmd_blacklist(message: Message) -> None:
         lines.append(line)
 
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+#редактирование текста
+@router.callback_query(ModerationCallback.filter(F.action == "edit_text"))
+async def on_edit_text_click(
+    callback: CallbackQuery,
+    callback_data: ModerationCallback,
+    state: FSMContext,
+) -> None:
+    submission_id = callback_data.submission_id
+
+    submission = await database.get_submission(submission_id)
+
+    if submission is None:
+        await callback.answer("Заявка не найдена.", show_alert=True)
+        return
+
+    if submission.status != "pending":
+        await callback.answer("Редактировать можно только заявки на модерации.", show_alert=True)
+        return
+
+    await state.set_state(ModerationStates.waiting_edit_text)
+    await state.update_data(edit_submission_id=submission_id)
+
+    if callback.message:
+        await callback.message.answer(
+            f"Отправьте новый текст для заявки #{submission_id} одним сообщением.\n\n"
+            f"Текущий текст:\n\n"
+            f"{escape(submission.text)}\n\n"
+            f"Для отмены — /cancel.",
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
+
+
+@router.message(Command("cancel"), ModerationStates.waiting_edit_text)
+async def cmd_cancel_edit_text(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Редактирование отменено. Заявка осталась без изменений.")
+
+
+@router.message(ModerationStates.waiting_edit_text, F.text)
+async def on_new_submission_text(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    data = await state.get_data()
+    submission_id = data.get("edit_submission_id")
+
+    if submission_id is None:
+        await state.clear()
+        await message.answer("Не удалось определить заявку для редактирования.")
+        return
+
+    new_text = (message.text or "").strip()
+
+    if not new_text:
+        await message.answer("Текст новости не может быть пустым.")
+        return
+
+    if len(new_text) > 3000:
+        await message.answer("Текст слишком длинный. Максимум — 3000 символов.")
+        return
+
+    submission = await database.update_submission_text(
+        submission_id=submission_id,
+        new_text=new_text,
+    )
+
+    await state.clear()
+
+    if submission is None:
+        await message.answer("Заявка не найдена.")
+        return
+
+    if submission.status != "pending":
+        await message.answer("Заявка уже обработана, её нельзя редактировать.")
+        return
+
+    await message.answer(
+        f"✅ Текст заявки #{submission.id} обновлён.\n\n"
+        f"<b>{escape(submission.title)}</b>\n\n"
+        f"{escape(submission.text)}",
+        parse_mode="HTML",
+        reply_markup=moderation_keyboard(submission.id),
+    )

@@ -5,7 +5,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 class ModerationCallback(CallbackData, prefix="mod"):
     """CallbackData для кнопок модерации."""
 
-    action: str  # "approve" | "reject"
+    action: str  # "approve" | "reject" | "edit_text"
     submission_id: int
 
 
@@ -26,6 +26,21 @@ def moderation_keyboard(submission_id: int) -> InlineKeyboardMarkup:
                         action="reject", submission_id=submission_id
                     ).pack(),
                 ),
-            ]
+            ],
+            [
+
+                InlineKeyboardButton(
+
+                    text="✏️ Редактировать текст",
+
+                    callback_data=ModerationCallback(
+
+                        action="edit_text", submission_id=submission_id
+
+                    ).pack(),
+
+                ),
+
+            ],
         ]
     )

@@ -15,3 +15,4 @@ class ModerationStates(StatesGroup):
     """FSM-состояния модератора при отклонении заявки."""
 
     waiting_reject_reason = State()
+    waiting_edit_text = State()
