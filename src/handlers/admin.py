@@ -14,12 +14,12 @@ from aiogram.types import (
     Message,
 )
 
-from hse_tgbot.src import database, publisher
-from hse_tgbot.src.config import settings
-from hse_tgbot.src.database import Submission
-from hse_tgbot.src.filters.admin import AdminFilter
-from hse_tgbot.src.keyboards.admin import ModerationCallback, moderation_keyboard
-from hse_tgbot.src.states.submission import ModerationStates
+from .. import database, publisher
+from ..config import settings
+from ..database import Submission
+from ..filters.admin import AdminFilter
+from ..keyboards.admin import ModerationCallback, moderation_keyboard
+from ..states.submission import ModerationStates
 
 logger = logging.getLogger(__name__)
 
