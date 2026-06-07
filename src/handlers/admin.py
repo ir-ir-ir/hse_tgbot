@@ -454,7 +454,7 @@ async def on_edit_text_click(
         await callback.message.answer(
             f"Отправьте новый текст для заявки #{submission_id} одним сообщением.\n\n"
             f"Текущий текст:\n\n"
-            f"{escape(submission.text)}\n\n"
+            f"{submission.text}\n\n"
             f"Для отмены — /cancel.",
             parse_mode="HTML",
         )
@@ -481,7 +481,7 @@ async def on_new_submission_text(
         await message.answer("Не удалось определить заявку для редактирования.")
         return
 
-    new_text = (message.text or "").strip()
+    new_text = (message.html_text or message.text or "").strip()
 
     if not new_text:
         await message.answer("Текст новости не может быть пустым.")
@@ -509,7 +509,7 @@ async def on_new_submission_text(
     await message.answer(
         f"✅ Текст заявки #{submission.id} обновлён.\n\n"
         f"<b>{escape(submission.title)}</b>\n\n"
-        f"{escape(submission.text)}",
+        f"{submission.text}",
         parse_mode="HTML",
         reply_markup=moderation_keyboard(submission.id),
     )
