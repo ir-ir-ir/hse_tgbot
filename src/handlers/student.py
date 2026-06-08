@@ -549,14 +549,16 @@ async def on_draft_load(
         )
     else:
         # Всё заполнено — показываем превью
+
+        await state.update_data(loaded_draft_id=draft.id)
+
         await _show_preview_from_data(
             callback.message,
             state,
             title=draft.title,
             text=draft.text,
             photos=list(draft.photo_file_ids or []),
-            links=list(draft.links or []),
-            loaded_draft_id=draft.id,
+            links=list(draft.links or [])
         )
 
 
