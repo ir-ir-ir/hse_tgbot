@@ -414,6 +414,12 @@ async def confirm_send(
         photo_file_ids=list(data.get("photo_file_ids", [])),
         links=list(data.get("links", [])),
     )
+    loaded_draft_id = data.get("loaded_draft_id")
+    if loaded_draft_id is not None:
+        try:
+            await database.delete_draft(int(loaded_draft_id), user.id)
+        except (TypeError, ValueError):
+            logger.warning("Invalid loaded_draft_id in FSM: %r", loaded_draft_id)
     await state.clear()
 
     if callback.message:
@@ -550,6 +556,7 @@ async def on_draft_load(
             text=draft.text,
             photos=list(draft.photo_file_ids or []),
             links=list(draft.links or []),
+            loaded_draft_id=draft.id,
         )
 
 
